@@ -1,3 +1,27 @@
+# winGod
+
+> This is a fork of [Win11Debloat](https://github.com/Raphire/Win11Debloat),
+> which remains the upstream project and the source of this codebase. See
+> [NOTICE.md](NOTICE.md).
+
+winGod keeps the Win11Debloat engine and adds what it does not have today:
+
+- **Measurement.** Idle RAM, CPU, process/service/handle counts, disk writes and
+  boot time, captured before and after a run.
+- **Services.** A declarative service module with start-mode changes, per-change
+  risk, and a revert manifest. Upstream has none.
+- **Profiles.** `safe` and `lean` tiers instead of one flat list of toggles.
+- **Revert.** Undo a change without restoring a whole registry snapshot.
+
+Scope, architecture and limits: [docs/winGod/SPEC.md](docs/winGod/SPEC.md).
+Projected gains and the measurement protocol: [docs/winGod/PERF.md](docs/winGod/PERF.md).
+What each change breaks: [docs/winGod/RISK.md](docs/winGod/RISK.md).
+Upstream files we touch: [PATCHES.md](PATCHES.md).
+
+Everything below is upstream documentation and still applies.
+
+---
+
 # Win11Debloat
 
 [![GitHub Release](https://img.shields.io/github/v/release/Raphire/Win11Debloat?style=for-the-badge&label=Latest%20release)](https://github.com/Raphire/Win11Debloat/releases/latest)

@@ -1,3 +1,5 @@
 LastUsedSettings.json
 Logs/*
 Backups/*
+# Local Command Code state
+.commandcode/
