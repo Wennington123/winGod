@@ -26,6 +26,13 @@ Rule: a `core-additions` commit must not reference anything from the
 
 Anything not listed above is a new file.
 
+## Current state
+
+The logging and audit layer (`Scripts/Performance/Logging.ps1`,
+`Audit-System.ps1`, `Invoke-WinGodAudit.ps1`) touches no upstream file. It is
+run directly and is not wired into `Win11Debloat.ps1` yet. Wiring it in adds
+the CLI switches listed above and nothing else.
+
 ## Sending a PR upstream
 
 ```bash

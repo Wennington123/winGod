@@ -1,14 +1,18 @@
 # Scripts/Performance
 
 winGod layer. Not upstreamed, and not referenced by any file outside this
-folder except the CLI dispatch in `Win11Debloat.ps1`.
-
-Planned modules:
+folder.
 
 | File | Does |
 |---|---|
-| `Audit-System.ps1` | read-only inventory: processes, services, tasks, UWP background, startup entries |
-| `Measure-Idle.ps1` | fixed-window capture of RAM, CPU, disk writes, handles, connections |
+| `Logging.ps1` | structured run log: JSONL, text, console, rotation, redaction |
+| `Audit-System.ps1` | read-only collectors plus the idle sampler and report export |
+| `Invoke-WinGodAudit.ps1` | entry point, wires the log to the audit |
+
+Planned:
+
+| File | Does |
+|---|---|
 | `Compare-Baseline.ps1` | delta report between two captures |
 | `Get-ServiceState.ps1` | read start mode and status per service |
 | `Set-ServiceState.ps1` | apply start mode, honoring `-WhatIf`, recording previous state |
@@ -22,4 +26,7 @@ Rules for this folder:
 2. Every write records the previous state before touching anything.
 3. No dependency on files outside this folder, except read access to
    `Config/Features.json`.
-4. Tests live in `Tests/` like upstream, one file per module.
+4. Tests live in `Tests/`, one file per module.
+5. PowerShell 5.1 only. No ternary, no `??`, no `-Parallel`.
+6. Counters come from CIM raw perf classes, never `Get-Counter`. Counter names
+   are localized; raw class property names are not.

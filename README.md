@@ -16,6 +16,7 @@ winGod keeps the Win11Debloat engine and adds what it does not have today:
 Scope, architecture and limits: [docs/winGod/SPEC.md](docs/winGod/SPEC.md).
 Projected gains and the measurement protocol: [docs/winGod/PERF.md](docs/winGod/PERF.md).
 What each change breaks: [docs/winGod/RISK.md](docs/winGod/RISK.md).
+How to run the audit on a real machine: [docs/winGod/RUN-ON-WINDOWS.md](docs/winGod/RUN-ON-WINDOWS.md).
 Upstream files we touch: [PATCHES.md](PATCHES.md).
 
 Everything below is upstream documentation and still applies.
