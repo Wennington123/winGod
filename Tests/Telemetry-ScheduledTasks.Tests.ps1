@@ -8,16 +8,29 @@ Describe 'Get-TelemetryScheduledTasks' {
     It 'returns the expected telemetry task catalog' {
         $tasks = @(Get-TelemetryScheduledTasks)
 
-        $tasks.Count | Should -Be 8
+        $tasks.Count | Should -Be 21
         @($tasks | ForEach-Object { "$($_.Path)|$($_.Name)" }) | Should -Be @(
             '\Microsoft\Windows\Application Experience\|Microsoft Compatibility Appraiser'
             '\Microsoft\Windows\Application Experience\|Microsoft Compatibility Appraiser Exp'
             '\Microsoft\Windows\Application Experience\|ProgramDataUpdater'
             '\Microsoft\Windows\Application Experience\|StartupAppTask'
+            '\Microsoft\Windows\Application Experience\|PcaPatchDbTask'
+            '\Microsoft\Windows\Application Experience\|MareBackup'
+            '\Microsoft\Windows\Application Experience\|Inventory'
+            '\Microsoft\Windows\Application Experience\|AitAgent'
             '\Microsoft\Windows\Customer Experience Improvement Program\|Consolidator'
             '\Microsoft\Windows\Customer Experience Improvement Program\|UsbCeip'
             '\Microsoft\Windows\DiskDiagnostic\|Microsoft-Windows-DiskDiagnosticDataCollector'
             '\Microsoft\Windows\Autochk\|Proxy'
+            '\Microsoft\Windows\Feedback\Siuf\|DmClient'
+            '\Microsoft\Windows\Feedback\Siuf\|DmClientOnScenarioDownload'
+            '\Microsoft\Windows\Windows Error Reporting\|QueueReporting'
+            '\Microsoft\Windows\PI\|Sqm-Tasks'
+            '\Microsoft\Windows\Power Efficiency Diagnostics\|AnalyzeSystem'
+            '\Microsoft\Windows\DiskFootprint\|Diagnostics'
+            '\Microsoft\Windows\Device Information\|Device'
+            '\Microsoft\Windows\Device Information\|Device User'
+            '\Microsoft\Windows\WDI\|ResolutionHost'
         )
     }
 }
