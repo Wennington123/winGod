@@ -17,30 +17,8 @@ Scope, architecture and limits: [docs/winGod/SPEC.md](docs/winGod/SPEC.md).
 Projected gains and the measurement protocol: [docs/winGod/PERF.md](docs/winGod/PERF.md).
 What each change breaks: [docs/winGod/RISK.md](docs/winGod/RISK.md).
 How to run the audit on a real machine: [docs/winGod/RUN-ON-WINDOWS.md](docs/winGod/RUN-ON-WINDOWS.md).
+The applied lean profile on this machine: [docs/winGod/APPLIED.md](docs/winGod/APPLIED.md).
 Upstream files we touch: [PATCHES.md](PATCHES.md).
-
-## The winGod dock
-
-A macOS/lumabar-style bottom dock built into this repo — floating glass pill
-(DWM acrylic), macOS magnification on hover, launch bounce, CPU/RAM/disk,
-sound/network indicators, clock, pinned app tiles and a ⚙ personalization
-panel. The Windows taskbar is fully hidden while the dock runs.
-
-- **Run it:** `.\Scripts\Dock\Start-Dock.bat` (or
-  `PowerShell -File .\Scripts\Dock\Invoke-WinGodDock.ps1` with `-OpenPanel`
-  to open the personalization panel right away).
-- **Install for your user (1 click):**
-  `PowerShell -File .\Scripts\Dock\Install-WinGodDock.ps1` — enables the
-  auto-start Run key and launches the dock. `-Uninstall` reverses everything.
-- **Personalize:** ⚙ opens the panel — widgets (clock, stats, apps, sound/
-  network, battery, network speed, uptime, day progress), theme dark/glass,
-  height, auto-hide, fullscreen hide, and a visual pin/browser for apps.
-- **Stop:** `PowerShell -File .\Scripts\Dock\Invoke-WinGodDock.ps1 -Stop`
-  (the Windows taskbar comes back).
-- **Taskbar switch:** `.\Scripts\Dock\Toggle-TaskbarAutoHide.ps1 -Status`
-  (also `-Enable`, `-Disable`).
-
-Details and caveats: [docs/winGod/DOCK.md](docs/winGod/DOCK.md).
 
 Everything below is upstream documentation and still applies.
 
