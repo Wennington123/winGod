@@ -734,6 +734,7 @@ function Start-WinGodDockWindow {
     })
 
     $window.Add_MouseEnter({
+        Write-WinGodLog -Module 'dock' -Event 'dock.mouse.enter' -Message 'hover enter'
         $script:dockMouseInside = $true
         if ($script:dockConfig.autoHideBar -and $script:dockCollapsed) {
             $script:dockHideTimer.Stop()
@@ -743,6 +744,7 @@ function Start-WinGodDockWindow {
     })
 
     $window.Add_MouseLeave({
+        Write-WinGodLog -Module 'dock' -Event 'dock.mouse.leave' -Message 'hover leave'
         $script:dockMouseInside = $false
         if ($script:dockConfig.autoHideBar -and -not $script:dockCollapsed -and -not $script:dockFullscreen) {
             $script:dockHideTimer.Stop()
@@ -1235,12 +1237,13 @@ function Start-WinGodDockPanel {
         $restartScript = (@'
 $tries = 0
 while ((Test-Path '<RUNFILE>') -and ($tries -lt 24)) { Start-Sleep -Milliseconds 250; $tries++ }
-Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','<DOCKSCRIPT>'
+Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File', '"<DOCKSCRIPT>"'
 '@).Replace('<RUNFILE>', [string]$script:dockRunFile).Replace('<DOCKSCRIPT>', $scriptPath)
         Set-Content -Path (Join-Path $script:dockDataRoot 'restart.ps1') -Value $restartScript -Encoding UTF8
         Start-Process powershell -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:dockDataRoot 'restart.ps1'))
 
         Write-WinGodLog -Module 'dock' -Event 'dock.panel.saved' -Message 'config saved from panel'
+        $script:dockRestartPending = $true
         $script:dockPanelWindow.Close()
         # close the main dock; the restart watcher relaunches once run.json is gone
         $script:dockWindow.Close()
@@ -1331,6 +1334,7 @@ function Invoke-WinGodDockInstanceStop {
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $script:panelPending = [bool]$OpenPanel
+$script:dockRestartPending = $false
 
 if (-not $NoRunKey -and -not $Stop) {
     & (Join-Path $PSScriptRoot 'Register-WinGodDockStartup.ps1') -Register *> $null
@@ -1377,8 +1381,11 @@ try {
     Start-WinGodDockWindow -Config $script:dockConfig
 }
 finally {
-    Set-WinGodShellTrayHidden -Hidden $false
-    & (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1') -Disable *> $null
+    # a seamless restart keeps both layers applied; the new instance re-applies them
+    if (-not $script:dockRestartPending) {
+        Set-WinGodShellTrayHidden -Hidden $false
+        & (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1') -Disable *> $null
+    }
     Remove-Item $script:dockRunFile -Force -ErrorAction SilentlyContinue
     Close-WinGodLog
 }
