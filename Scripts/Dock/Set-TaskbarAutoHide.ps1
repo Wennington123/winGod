@@ -1,35 +1,7 @@
 ﻿<#
     .SYNOPSIS
-    Toggles Windows taskbar auto-hide for the winGod dock.
-
-    .DESCRIPTION
-    Edits the auto-hide flag inside the HKCU StuckRects3 'Settings' binary value
-    and restarts Explorer to apply it. Used by the dock to hide the Windows
-    taskbar while the dock is running and restore it again on stop.
-
-    Modes:
-      -Enable   turn auto-hide on
-      -Disable  turn auto-hide off
-      -Status   report current state only, no changes
-
-    .OUTPUTS
-    System.Boolean when queried with -Status: $true when auto-hide is on.
-
-    .EXAMPLE
-    .\Set-TaskbarAutoHide.ps1 -Enable
+    Library for the Windows taskbar auto-hide switch used by the winGod dock.
 #>
-[CmdletBinding(DefaultParameterSetName = 'Enable')]
-param(
-    [Parameter(ParameterSetName = 'Enable')]
-    [switch]$Enable,
-
-    [Parameter(ParameterSetName = 'Disable')]
-    [switch]$Disable,
-
-    [Parameter(ParameterSetName = 'Status')]
-    [switch]$Status
-)
-
 $stuckRects3Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3'
 $settingsValueName = 'Settings'
 
@@ -109,74 +81,106 @@ function Get-WinGodTaskbarAutoHideState {
 }
 
 # ---------- Main (skipped when dot-sourced, e.g. by the test suite) ----------
-if ($MyInvocation.InvocationName -eq '.') { return }
+function Invoke-WinGodTaskbarAutoHide {
+    <#
+        .SYNOPSIS
+        Compiled-and-script entrypoint used by the dock, the CLI script and
+        the bundled exe.
 
-if ($Status) {
-    $state = Get-WinGodTaskbarAutoHideState
-    if ($null -eq $state) {
-        Write-Host 'Estado desconhecido: StuckRects3 ausente ou formato inesperado' -ForegroundColor Yellow
-        return
+        .PARAMETER Enable
+        Turns auto-hide on.
+
+        .PARAMETER Disable
+        Turns auto-hide off.
+
+        .PARAMETER Status
+        Reports the current state.
+
+        .OUTPUTS
+        Exit code 0/1 for Enable and Disable, $null for Status queries
+        (the state is printed to the host).
+    #>
+    param(
+        [Parameter(ParameterSetName = 'Enable')]
+        [switch]$Enable,
+
+        [Parameter(ParameterSetName = 'Disable')]
+        [switch]$Disable,
+
+        [Parameter(ParameterSetName = 'Status')]
+        [switch]$Status
+    )
+
+    if ($Status) {
+        $state = Get-WinGodTaskbarAutoHideState
+        if ($null -eq $state) {
+            Write-Host 'Estado desconhecido: StuckRects3 ausente ou formato inesperado' -ForegroundColor Yellow
+            return $null
+        }
+        Write-Host ("Auto-hide da taskbar: {0}" -f ($(if ($state) { 'ATIVO' } else { 'INATIVO' })))
+        return $null
     }
-    Write-Host ("Auto-hide da taskbar: {0}" -f ($(if ($state) { 'ATIVO' } else { 'INATIVO' })))
-    return $state
-}
 
-$desired = -not $Disable
+    $desired = -not $Disable
 
-try {
-    $current = (Get-ItemProperty -Path $stuckRects3Path -Name $settingsValueName -ErrorAction Stop).Settings
-}
-catch {
-    Write-Warning "StuckRects3 não encontrado: $($_.Exception.Message)"
-    Write-Host 'Ativa manualmente: Settings > Personalização > Barra de tarefas > Ocultar barra de tarefas automaticamente' -ForegroundColor Yellow
-    exit 1
-}
-
-$isAutoHide = $null
-if ($current -and $current.Length -ge 9) {
-    switch ($current[8]) {
-        0x78 { $isAutoHide = $false }
-        0x79 { $isAutoHide = $true }
-        0x02 { $isAutoHide = $false }
-        0x03 { $isAutoHide = $true }
+    try {
+        $current = (Get-ItemProperty -Path $stuckRects3Path -Name $settingsValueName -ErrorAction Stop).Settings
     }
+    catch {
+        Write-Warning "StuckRects3 não encontrado: $($_.Exception.Message)"
+        Write-Host 'Ativa manualmente: Settings > Personalização > Barra de tarefas > Ocultar barra de tarefas automaticamente' -ForegroundColor Yellow
+        return 1
+    }
+
+    $isAutoHide = $null
+    if ($current -and $current.Length -ge 9) {
+        switch ($current[8]) {
+            0x78 { $isAutoHide = $false }
+            0x79 { $isAutoHide = $true }
+            0x02 { $isAutoHide = $false }
+            0x03 { $isAutoHide = $true }
+        }
+    }
+
+    if ($isAutoHide -eq $desired) {
+        Write-Host ("Auto-hide da taskbar já está {0}, nada a fazer." -f ($(if ($desired) { 'ATIVO' } else { 'INATIVO' })))
+        return 0
+    }
+
+    $updated = Convert-WinGodStuckRectsSettings -Bytes $current -AutoHide $desired
+
+    if (-not $updated) {
+        Write-Warning 'Formato de StuckRects3 não reconhecido; valor deixado intacto.'
+        Write-Host 'Ativa manualmente: Settings > Personalização > Barra de tarefas > Ocultar barra de tarefas automaticamente' -ForegroundColor Yellow
+        return 1
+    }
+
+    # Write ownership guard: never truncate the value, keep original length
+    if ($updated.Length -ne $current.Length) {
+        Write-Warning 'Tamanho inesperado após atualização; nada escrito.'
+        return 1
+    }
+
+    try {
+        Set-ItemProperty -Path $stuckRects3Path -Name $settingsValueName -Value $updated -Type Binary -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Falha ao escrever StuckRects3: $($_.Exception.Message)"
+        return 1
+    }
+
+    Write-Host ("Auto-hide da taskbar {0}." -f ($(if ($desired) { 'ATIVADO' } else { 'DESATIVADO' })))
+    Write-Host "A reiniciar o Windows Explorer para aplicar a mudança..." -ForegroundColor DarkGray
+
+    if ([Environment]::Is64BitProcess -eq [Environment]::Is64BitOperatingSystem) {
+        Stop-Process -ProcessName Explorer -Force -ErrorAction SilentlyContinue
+    }
+    else {
+        Write-Host 'Não foi possível reiniciar o Explorer a partir de um processo 32-bit; reinicie-o manualmente.' -ForegroundColor Yellow
+    }
+
+    return 0
 }
 
-if ($isAutoHide -eq $desired) {
-    Write-Host ("Auto-hide da taskbar já está {0}, nada a fazer." -f ($(if ($desired) { 'ATIVO' } else { 'INATIVO' })))
-    exit 0
-}
-
-$updated = Convert-WinGodStuckRectsSettings -Bytes $current -AutoHide $desired
-
-if (-not $updated) {
-    Write-Warning 'Formato de StuckRects3 não reconhecido; valor deixado intacto.'
-    Write-Host 'Ativa manualmente: Settings > Personalização > Barra de tarefas > Ocultar barra de tarefas automaticamente' -ForegroundColor Yellow
-    exit 1
-}
-
-# Write ownership guard: never truncate the value, keep original length
-if ($updated.Length -ne $current.Length) {
-    Write-Warning 'Tamanho inesperado após atualização; nada escrito.'
-    exit 1
-}
-
-try {
-    Set-ItemProperty -Path $stuckRects3Path -Name $settingsValueName -Value $updated -Type Binary -ErrorAction Stop
-}
-catch {
-    Write-Warning "Falha ao escrever StuckRects3: $($_.Exception.Message)"
-    exit 1
-}
-
-Write-Host ("Auto-hide da taskbar {0}." -f ($(if ($desired) { 'ATIVADO' } else { 'DESATIVADO' })))
-Write-Host "A reiniciar o Windows Explorer para aplicar a mudança..." -ForegroundColor DarkGray
-
-if ([Environment]::Is64BitProcess -eq [Environment]::Is64BitOperatingSystem) {
-    Stop-Process -ProcessName Explorer -Force -ErrorAction SilentlyContinue
-}
-else {
-    Write-Host 'Não foi possível reiniciar o Explorer a partir de um processo 32-bit; reinicie-o manualmente.' -ForegroundColor Yellow
-}
-
-exit 0
+# ---------- Library (no top-level param; the CLI lives in
+# Toggle-TaskbarAutoHide.ps1) ----------

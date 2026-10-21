@@ -32,6 +32,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\..\Performance\Logging.ps1"
+. (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1')
 
 $script:dockDataRoot = Join-Path $env:LOCALAPPDATA 'winGod\dock'
 $script:dockRunFile = Join-Path $script:dockDataRoot 'run.json'
@@ -58,7 +59,13 @@ function New-WinGodDockConfig {
     param([string]$Path)
 
     if (-not $Path) {
-        $Path = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'Config\Dock.json'
+        $configInRepo = if ($PSScriptRoot) {
+            Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'Config\Dock.json'
+        }
+        else {
+            Join-Path $script:dockDataRoot 'Dock.json'
+        }
+        $Path = $configInRepo
     }
 
     $configRaw = $null
@@ -1442,6 +1449,80 @@ function Start-WinGodDockWidgetPicker {
     $window.Show()
 }
 
+function Invoke-WinGodDockRunKeyCommand {
+    <#
+        .SYNOPSIS
+        Writes/removes the auto-start registry entry. Works from the repo
+        scripts and from the bundled exe (it targets the running program).
+    #>
+    param(
+        [switch]$Register,
+        [switch]$Unregister
+    )
+
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $runValueName = 'winGodDock'
+    $program = $script:dockProgramPath
+    $isExe = [bool]($program -like '*.exe')
+
+    $command = if ($isExe) {
+        "`"$program`" -NoRunKey"
+    }
+    else {
+        "powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$program`" -NoRunKey"
+    }
+
+    if ($Unregister) {
+        $existing = (Get-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue)
+        if ($null -eq $existing) {
+            Write-Host 'Run key do winGodDock não existe, nada a fazer.'
+            return
+        }
+        try {
+            Remove-ItemProperty -Path $runKey -Name $runValueName -Force -ErrorAction Stop
+            Write-Host 'Run key do winGodDock removida.' -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "Falha ao remover a Run key: $($_.Exception.Message)"
+        }
+        return
+    }
+
+    if (-not (Test-Path $program)) {
+        Write-Warning "Programa de dock não encontrado: $program"
+        return
+    }
+
+    $existing = (Get-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue)
+    if ($existing -and $existing.$runValueName -eq $command) {
+        Write-Host 'Run key do winGodDock já configurada, nada a fazer.'
+        return
+    }
+
+    try {
+        Set-ItemProperty -Path $runKey -Name $runValueName -Value $command -Type String -Force -ErrorAction Stop
+        Write-Host 'Run key do winGodDock registrada: o dock arranca com o login.' -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Falha ao escrever a Run key: $($_.Exception.Message)"
+    }
+}
+
+function Get-WinGodDockProgramPath {
+    <#
+        .SYNOPSIS
+        Resolves the dock program file (the bundled exe or this script).
+    #>
+    $source = $PSCommandPath
+    if ($source -and $source.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) {
+        return $source
+    }
+    if ($PSScriptRoot) {
+        return Join-Path $PSScriptRoot 'Invoke-WinGodDock.ps1'
+    }
+    return Join-Path $script:dockDataRoot 'winGod-dock.ps1'
+}
+
 function Start-WinGodDockPanel {
     <#
         .SYNOPSIS
@@ -1721,12 +1802,19 @@ function Start-WinGodDockPanel {
         Save-WinGodDockConfig -Config $next
 
         # restart once this process is gone: watcher waits for run.json removal
-        $scriptPath = Join-Path $PSScriptRoot 'Invoke-WinGodDock.ps1'
+        $program = [string]$script:dockProgramPath
+        $isExe = $program.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)
+        $launchLine = if ($isExe) {
+            "Start-Process `"$program`""
+        }
+        else {
+            "Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File', '`"$program`"'"
+        }
         $restartScript = (@'
 $tries = 0
-while ((Test-Path '<RUNFILE>') -and ($tries -lt 24)) { Start-Sleep -Milliseconds 250; $tries++ }
-Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File', '"<DOCKSCRIPT>"'
-'@).Replace('<RUNFILE>', [string]$script:dockRunFile).Replace('<DOCKSCRIPT>', $scriptPath)
+while ((Test-Path '<RUNFILE>') -and ($tries -lt 40)) { Start-Sleep -Milliseconds 250; $tries++ }
+<LAUNCH>
+'@).Replace('<RUNFILE>', [string]$script:dockRunFile).Replace('<LAUNCH>', $launchLine)
         Set-Content -Path (Join-Path $script:dockDataRoot 'restart.ps1') -Value $restartScript -Encoding UTF8
         Start-Process powershell -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $script:dockDataRoot 'restart.ps1'))
 
@@ -1815,7 +1903,7 @@ function Invoke-WinGodDockInstanceStop {
     Write-Host 'Dock parado.' -ForegroundColor Green
     Write-Host 'A restaurar a taskbar do Windows...' -ForegroundColor DarkGray
     Set-WinGodShellTrayHidden -Hidden $false
-    & (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1') -Disable | Out-Null
+    Invoke-WinGodTaskbarAutoHide -Disable | Out-Null
 }
 
 # ---------- Entrypoint (skipped when dot-sourced, e.g. by the test suite) ----------
@@ -1823,9 +1911,10 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 
 $script:panelPending = [bool]$OpenPanel
 $script:dockRestartPending = $false
+$script:dockProgramPath = Get-WinGodDockProgramPath
 
 if (-not $NoRunKey -and -not $Stop) {
-    & (Join-Path $PSScriptRoot 'Register-WinGodDockStartup.ps1') -Register *> $null
+    Invoke-WinGodDockRunKeyCommand -Register *> $null
 }
 
 if ($Stop) {
@@ -1862,7 +1951,7 @@ try {
     $null = New-WinGodLog -Path (Join-Path $script:dockDataRoot 'logs') -Level 'Info'
     Add-WinGodLogContext -Data @{ phase = 'dock' }
 
-    & (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1') -Enable *> $null
+    Invoke-WinGodTaskbarAutoHide -Enable *> $null
     Set-WinGodShellTrayHidden -Hidden $true
 
     Set-WinGodDockRunState -ConfigPath $script:dockConfig.file
@@ -1872,7 +1961,7 @@ finally {
     # a seamless restart keeps both layers applied; the new instance re-applies them
     if (-not $script:dockRestartPending) {
         Set-WinGodShellTrayHidden -Hidden $false
-        & (Join-Path $PSScriptRoot 'Set-TaskbarAutoHide.ps1') -Disable *> $null
+        Invoke-WinGodTaskbarAutoHide -Disable *> $null
     }
     Remove-Item $script:dockRunFile -Force -ErrorAction SilentlyContinue
     Close-WinGodLog
