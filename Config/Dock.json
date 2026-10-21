@@ -2,6 +2,7 @@
   "Version": "1.0",
   "Height": "L",
   "Theme": "glass",
+  "GlassMode": "blur",
   "Clock24h": true,
   "Widgets": [
     "clock",
