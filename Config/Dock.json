@@ -1,0 +1,32 @@
+{
+  "Version": "1.0",
+  "Height": "L",
+  "Theme": "glass",
+  "Clock24h": true,
+  "Widgets": [
+    "clock",
+    "stats",
+    "appTiles",
+    "indicators"
+  ],
+  "AutoHideBar": true,
+  "FullscreenHideBar": true,
+  "PinnedApps": [
+    {
+      "Name": "Terminal",
+      "Path": "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\wt.exe",
+      "IconPath": "%SystemRoot%\\System32\\cmd.exe"
+    },
+    {
+      "Name": "Firefox",
+      "Path": "C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+    },
+    {
+      "Name": "Flameshot",
+      "Path": "C:\\Program Files\\Flameshot\\bin\\flameshot.exe",
+      "Args": [
+        "launcher"
+      ]
+    }
+  ]
+}
