@@ -235,6 +235,11 @@ function Move-WinGodDockTo {
         $physH - [int][System.Math]::Round(8.0 * $scale)
     }
 
+    # skip if already within tolerance: prevents flicker loops on hover
+    if ([System.Math]::Abs($rect.Left - $x) -le 4 -and [System.Math]::Abs($rect.Top - $y) -le 4) {
+        return $true
+    }
+
     $SWP_NOACTIVATE = 0x10
     [void][WinGodDockNative]::SetWindowPos(
         $handle,
@@ -1048,8 +1053,11 @@ function Start-WinGodDockWindow {
         }
 
         # drift correction: always re-place the dock at the edge in physical
-        # pixels (this is cheap and immune to WPF layout / tiling WM races)
-        Move-WinGodDockTo -Expanded (-not $script:dockCollapsed)
+        # pixels — but never while the cursor is over it (that would yank the
+        # bar away and fire leave/enter flicker loops)
+        if (-not $script:dockMouseInside) {
+            Move-WinGodDockTo -Expanded (-not $script:dockCollapsed)
+        }
 
         if (-not $script:dockFullscreen) {
             # Re-assert topmost: other apps (and tiling WMs) re-raise above us.
