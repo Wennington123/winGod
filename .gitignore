@@ -3,3 +3,5 @@ Logs/*
 Backups/*
 # Local Command Code state
 .commandcode/
+
+build/
