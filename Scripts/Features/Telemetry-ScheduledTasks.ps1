@@ -16,10 +16,23 @@ function Get-TelemetryScheduledTasks {
         @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "Microsoft Compatibility Appraiser Exp" },
         @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "ProgramDataUpdater" },
         @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "StartupAppTask" },
+        @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "PcaPatchDbTask" },
+        @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "MareBackup" },
+        @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "Inventory" },
+        @{ Path = "\Microsoft\Windows\Application Experience\"; Name = "AitAgent" },
         @{ Path = "\Microsoft\Windows\Customer Experience Improvement Program\"; Name = "Consolidator" },
         @{ Path = "\Microsoft\Windows\Customer Experience Improvement Program\"; Name = "UsbCeip" },
         @{ Path = "\Microsoft\Windows\DiskDiagnostic\"; Name = "Microsoft-Windows-DiskDiagnosticDataCollector" },
-        @{ Path = "\Microsoft\Windows\Autochk\"; Name = "Proxy" }
+        @{ Path = "\Microsoft\Windows\Autochk\"; Name = "Proxy" },
+        @{ Path = "\Microsoft\Windows\Feedback\Siuf\"; Name = "DmClient" },
+        @{ Path = "\Microsoft\Windows\Feedback\Siuf\"; Name = "DmClientOnScenarioDownload" },
+        @{ Path = "\Microsoft\Windows\Windows Error Reporting\"; Name = "QueueReporting" },
+        @{ Path = "\Microsoft\Windows\PI\"; Name = "Sqm-Tasks" },
+        @{ Path = "\Microsoft\Windows\Power Efficiency Diagnostics\"; Name = "AnalyzeSystem" },
+        @{ Path = "\Microsoft\Windows\DiskFootprint\"; Name = "Diagnostics" },
+        @{ Path = "\Microsoft\Windows\Device Information\"; Name = "Device" },
+        @{ Path = "\Microsoft\Windows\Device Information\"; Name = "Device User" },
+        @{ Path = "\Microsoft\Windows\WDI\"; Name = "ResolutionHost" }
     )
 }
 
