@@ -80,10 +80,18 @@ function New-WinGodDockConfig {
         $height = $heightMap[$configRaw.Height]
     }
 
-    $widgets = @('clock', 'stats', 'appTiles', 'indicators')
+    $widgets = [System.Collections.Generic.List[string]]::new()
+    foreach ($known in @('clock', 'stats', 'appTiles', 'indicators', 'battery', 'network', 'uptime', 'dayProgress')) {
+        if ((-not $configRaw -or -not $configRaw.Widgets) -and ($known -in @('clock', 'stats', 'appTiles', 'indicators'))) {
+            $widgets.Add($known)
+        }
+    }
     if ($configRaw -and $configRaw.Widgets) {
-        $known = @(if ($configRaw.Widgets) { $configRaw.Widgets | Where-Object { $_ -in @('clock', 'stats', 'appTiles', 'indicators') } })
-        if ($known.Count -gt 0) { $widgets = $known }
+        foreach ($requested in @($configRaw.Widgets)) {
+            if ($requested -in @('clock', 'stats', 'appTiles', 'indicators', 'battery', 'network', 'uptime', 'dayProgress') -and -not $widgets.Contains($requested)) {
+                $widgets.Add($requested)
+            }
+        }
     }
 
     $heightKey = 'M'
@@ -780,6 +788,38 @@ function Start-WinGodDockWindow {
         [void]$row.Children.Add($clockPanel)
     }
 
+    # ---------- Widgets extras: day / battery / network / uptime ----------
+    $script:dockDayText = $null
+    $script:dockNetworkText = $null
+    $script:dockBatteryText = $null
+    $script:dockUptimeText = $null
+
+    function Add-WinGodDockTextWidget {
+        param([hashtable]$Config)
+
+        $widget = New-Object System.Windows.Controls.TextBlock
+        $widget.FontSize = 12
+        $widget.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $widget.Foreground = $brushConverter.ConvertFromString($theme.mutedForeground)
+        $widget.Margin = $widget.Margin = New-Object System.Windows.Thickness(6, 0, 2, 0)
+        $widget.Text = '...'
+        [void]$row.Children.Add($widget)
+        return $widget
+    }
+
+    if ($Config.widgets -contains 'dayProgress') {
+        $script:dockDayText = Add-WinGodDockTextWidget
+    }
+    if ($Config.widgets -contains 'network') {
+        $script:dockNetworkText = Add-WinGodDockTextWidget
+    }
+    if ($Config.widgets -contains 'battery') {
+        $script:dockBatteryText = Add-WinGodDockTextWidget
+    }
+    if ($Config.widgets -contains 'uptime') {
+        $script:dockUptimeText = Add-WinGodDockTextWidget
+    }
+
     # ---------- Personalize gear ----------
     $gearTile = New-Object System.Windows.Controls.Border
     $gearTile.CornerRadius = New-Object System.Windows.CornerRadius(9)
@@ -924,6 +964,10 @@ function Start-WinGodDockWindow {
             $script:dockClockTime.Text = $now.ToString($script:dockClockFormat)
             $script:dockClockDate.Text = $now.ToString('ddd dd/MM')
         }
+        if ($script:dockDayText) {
+            $fraction = $now.TimeOfDay.TotalMinutes / 1440.0
+            $script:dockDayText.Text = ('{0:0}% do dia' -f ($fraction * 100))
+        }
     })
 
     $statsTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -937,6 +981,50 @@ function Start-WinGodDockWindow {
         catch {
             if ($script:dockStatsText) {
                 $script:dockStatsText.Text = 'CPU ...  RAM ...'
+            }
+        }
+        if ($script:dockNetworkText) {
+            try {
+                $down = 0.0
+                $up = 0.0
+                Get-CimInstance -ClassName Win32_PerfFormattedData_Tcpip_NetworkInterface -ErrorAction Stop | ForEach-Object {
+                    $down += [double]$_.BytesReceivedPersec
+                    $up += [double]$_.BytesSentPersec
+                }
+                $script:dockNetworkText.Text = ('↓ {0} KB/s  ↑ {1} KB/s' -f [int][Math]::Round($down / 1024), [int][Math]::Round($up / 1024))
+            }
+            catch {
+                $script:dockNetworkText.Text = '↓ ...  ↑ ...'
+            }
+        }
+    })
+
+    $sysTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $sysTimer.Interval = [TimeSpan]::FromSeconds(15)
+    $sysTimer.Add_Tick({
+        if ($script:dockBatteryText) {
+            try {
+                $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop | Select-Object -First 1
+                if ($battery) {
+                    $suffix = if ($battery.BatteryStatus -in @(2, 6, 7, 8, 9, 11)) { ' ⚡' } else { '' }
+                    $script:dockBatteryText.Text = ('Bateria {0:0}%{1}' -f $battery.EstimatedChargeRemaining, $suffix)
+                }
+                else {
+                    $script:dockBatteryText.Text = 'Sem bateria'
+                }
+            }
+            catch {
+                $script:dockBatteryText.Text = 'Bateria ...'
+            }
+        }
+        if ($script:dockUptimeText) {
+            try {
+                $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+                $uptime = [DateTime]::Now - $os.LastBootUpTime
+                $script:dockUptimeText.Text = ('Ligado {0}h {1:00}m' -f [int]$uptime.TotalHours, $uptime.Minutes)
+            }
+            catch {
+                $script:dockUptimeText.Text = 'Ligado ...'
             }
         }
     })
@@ -1000,6 +1088,7 @@ function Start-WinGodDockWindow {
         $script:dockClockTimer.Stop()
         $script:dockStatsTimer.Stop()
         $script:dockFullscreenTimer.Stop()
+        $script:dockSysTimer.Stop()
         $script:dockWindow.Dispatcher.BeginInvokeShutdown([System.Windows.Threading.DispatcherPriority]::Normal)
         $script:dockWindow = $null
     })
@@ -1020,10 +1109,12 @@ function Start-WinGodDockWindow {
     $script:dockStatsTimer = $statsTimer
     $script:dockFullscreenTimer = $fullscreenTimer
     $script:dockHideTimer = $hideTimer
+    $script:dockSysTimer = $sysTimer
 
     $clockTimer.Start()
     $statsTimer.Start()
     $fullscreenTimer.Start()
+    $sysTimer.Start()
 
     $window.Show()
 
@@ -1052,6 +1143,303 @@ function Start-WinGodDockWindow {
     finally {
         Write-WinGodLog -Module 'dock' -Event 'dock.exited' -Message 'dock loop ended'
     }
+}
+
+function Get-WinGodDockWidgetCatalog {
+    <#
+        .SYNOPSIS
+        Offline widget catalog the picker exposes (id + label + description).
+    #>
+    return @(
+        @{ id = 'clock';       name = 'Relógio + data';   desc = 'Hora em 24h e o dia da semana' },
+        @{ id = 'stats';       name = 'CPU / RAM / Disco'; desc = 'Medições do sistema a cada 2s' },
+        @{ id = 'appTiles';    name = 'Apps pinados';      desc = 'Tiles dos apps escolhidos' },
+        @{ id = 'indicators';  name = 'Som e rede';        desc = 'Estado de áudio e conexão' },
+        @{ id = 'battery';     name = 'Bateria';           desc = 'Carga atual (se houver)' },
+        @{ id = 'network';     name = 'Download / Upload'; desc = 'Velocidade da rede em KB/s' },
+        @{ id = 'uptime';      name = 'Tempo ligado';      desc = 'Desde o último boot' },
+        @{ id = 'dayProgress'; name = 'Progresso do dia';  desc = 'Quanto do dia já passou' }
+    )
+}
+
+function Start-WinGodDockAppPicker {
+    <#
+        .SYNOPSIS
+        Visual installed-app chooser (Start Menu shortcuts with icons).
+    #>
+    param(
+        [hashtable]$AppState,
+        [string]$ThemeName = 'glass'
+    )
+
+    $theme = Get-WinGodDockTheme -Name $ThemeName
+    $brushConverter = New-Object System.Windows.Media.BrushConverter
+    $foreground = $brushConverter.ConvertFromString($theme.foreground)
+    $mutedForeground = $brushConverter.ConvertFromString($theme.mutedForeground)
+
+    $window = New-Object System.Windows.Window
+    $window.WindowStyle = [System.Windows.WindowStyle]::None
+    $window.ResizeMode = [System.Windows.ResizeMode]::NoResize
+    $window.ShowInTaskbar = $false
+    $window.Topmost = $true
+    $window.Title = 'winGodDockAppPicker'
+    $window.Width = 460
+    $window.Height = 520
+    $window.Background = $brushConverter.ConvertFromString($theme.barBackground)
+    $window.Padding = New-Object System.Windows.Thickness(4)
+    $script:dockAppPickerWindow = $window
+
+    $root = New-Object System.Windows.Controls.StackPanel
+    $root.Margin = New-Object System.Windows.Thickness(10, 10, 10, 12)
+    $window.Content = $root
+
+    $headerRow = New-Object System.Windows.Controls.StackPanel
+    $headerRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $title = New-Object System.Windows.Controls.TextBlock
+    $title.Text = 'Escolher apps por ícone'
+    $title.Foreground = $foreground
+    $title.FontSize = 14
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    [void]$headerRow.Children.Add($title)
+    $close = New-Object System.Windows.Controls.Button
+    $close.Content = [char]0xE8BB
+    $close.FontFamily = (New-Object System.Windows.Media.FontFamily('Segoe MDL2 Assets'))
+    $close.Background = [System.Windows.Media.Brushes]::Transparent
+    $close.Foreground = $mutedForeground
+    $close.Width = 26
+    $close.Margin = New-Object System.Windows.Thickness(330, 0, 0, 0)
+    $close.Add_Click({ $script:dockAppPickerWindow.Close() })
+    [void]$headerRow.Children.Add($close)
+    [void]$root.Children.Add($headerRow)
+
+    $searchBox = New-Object System.Windows.Controls.TextBox
+    $searchBox.Margin = New-Object System.Windows.Thickness(0, 10, 0, 6)
+    $searchBox.Foreground = $foreground
+    $searchBox.Background = [System.Windows.Media.Brushes]::Transparent
+    $searchBox.CaretBrush = $foreground
+    [void]$root.Children.Add($searchBox)
+
+    $listHost = New-Object System.Windows.Controls.StackPanel
+    $scroll = New-Object System.Windows.Controls.ScrollViewer
+    $scroll.MaxHeight = 430
+    $scroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+    $scroll.Content = $listHost
+    [void]$root.Children.Add($scroll)
+
+    # enumerate Start Menu shortcuts once
+    $script:dockAppPickerItems = [System.Collections.Generic.List[object]]::new()
+    $shell = New-Object -ComObject WScript.Shell
+    $roots = @(
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+    )
+    $seen = @{}
+    foreach ($rootFolder in $roots) {
+        Get-ChildItem $rootFolder -Recurse -Filter *.lnk -ErrorAction SilentlyContinue | ForEach-Object {
+            try {
+                $link = $shell.CreateShortcut($_.FullName)
+                $target = [string]$link.TargetPath
+                if ($target -and (Test-Path $target) -and ($target -match '\.exe$') -and -not $seen.ContainsKey($target.ToLowerInvariant())) {
+                    $seen[$target.ToLowerInvariant()] = $true
+                    $appEntry = @{
+                        Name = [IO.Path]::GetFileNameWithoutExtension($target)
+                        Path = $target
+                    }
+                    $iconSource = Add-WinGodDockIconSource -FilePath $target
+                    if ($iconSource) { $appEntry.iconSource = $iconSource }
+                    $script:dockAppPickerItems.Add($appEntry)
+                }
+            }
+            catch {}
+        }
+    }
+
+    function Set-AppPickerRow {
+        param($Row, [hashtable]$Item)
+
+        $inner = New-Object System.Windows.Controls.StackPanel
+        $inner.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+
+        if ($Item.iconSource) {
+            $iconImage = New-Object System.Windows.Controls.Image
+            $iconImage.Source = $Item.iconSource
+            $iconImage.Width = 22
+            $iconImage.Height = 22
+            $iconImage.Margin = New-Object System.Windows.Thickness(0, 0, 8, 0)
+            [void]$inner.Children.Add($iconImage)
+        }
+
+        $label = New-Object System.Windows.Controls.TextBlock
+        $label.Text = [string]$Item.Name
+        $label.Foreground = $foreground
+        $label.FontSize = 12.5
+        $label.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        [void]$inner.Children.Add($label)
+
+        $pinned = @($AppState.list | Where-Object { [string]$_.Path.ToLowerInvariant() -eq [string]$Item.Path.ToLowerInvariant() })
+        if ($pinned.Count -gt 0) {
+            $mark = New-Object System.Windows.Controls.TextBlock
+            $mark.Text = ' ✓ pinado'
+            $mark.Foreground = $mutedForeground
+            $mark.FontSize = 11
+            $mark.Margin = New-Object System.Windows.Thickness(6, 0, 0, 0)
+            $mark.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            [void]$inner.Children.Add($mark)
+        }
+
+        $Row.Child = $inner
+        $Row.Tag = $Item
+
+        $Row.Add_MouseEnter({
+            param($sender, $eventArgs)
+            $sender.Background = New-Object System.Windows.Media.SolidColorBrush(
+                [System.Windows.Media.Color]::FromArgb(0x33, 0xFF, 0xFF, 0xFF))
+        }.GetNewClosure())
+        $Row.Add_MouseLeftButtonUp({
+            param($sender, $eventArgs)
+            $app = $sender.Tag
+            $already = @($AppState.list | Where-Object { [string]$_.Path.ToLowerInvariant() -eq [string]$app.Path.ToLowerInvariant() })
+            if ($already.Count -eq 0) {
+                $AppState.list += @{ Name = [string]$app.Name; Path = [string]$app.Path }
+                Write-WinGodLog -Module 'dock' -Event 'dock.panel.app.picked' -Message ([string]$app.Name)
+            }
+            Show-AppRows -Filter $searchBox.Text
+        }.GetNewClosure())
+    }
+
+    function Show-AppRows {
+        param([string]$Filter)
+
+        $listHost.Children.Clear()
+        $shown = 0
+        foreach ($item in $script:dockAppPickerItems) {
+            if ($Filter -and ([string]$item.Name -notlike "*$Filter*")) { continue }
+            if ($shown -ge 120) { break }
+            $shown++
+
+            $row = New-Object System.Windows.Controls.Border
+            $row.CornerRadius = New-Object System.Windows.CornerRadius(8)
+            $row.Margin = New-Object System.Windows.Thickness(0, 3, 0, 3)
+            $row.Cursor = [System.Windows.Input.Cursors]::Hand
+            $row.Background = [System.Windows.Media.Brushes]::Transparent
+            $row.Tag = $null
+            $row.Child = $null
+
+            $row.Add_MouseEnter({
+                param($sender, $eventArgs)
+                $sender.Background = New-Object System.Windows.Media.SolidColorBrush(
+                    [System.Windows.Media.Color]::FromArgb(0x33, 0xFF, 0xFF, 0xFF))
+            }.GetNewClosure())
+
+            [void]$listHost.Children.Add($row)
+            Set-AppPickerRow -Row $row -Item $item
+        }
+    }
+
+    $searchBox.Add_TextChanged({
+        Show-AppRows -Filter $searchBox.Text
+    })
+    Show-AppRows -Filter ''
+
+    $window.Show()
+}
+
+function Start-WinGodDockWidgetPicker {
+    <#
+        .SYNOPSIS
+        Visual widget catalog: click a card to toggle the widget on/off.
+    #>
+    param(
+        [hashtable]$WidgetState,
+        [string]$ThemeName = 'glass'
+    )
+
+    $theme = Get-WinGodDockTheme -Name $ThemeName
+    $brushConverter = New-Object System.Windows.Media.BrushConverter
+    $foreground = $brushConverter.ConvertFromString($theme.foreground)
+    $mutedForeground = $brushConverter.ConvertFromString($theme.mutedForeground)
+
+    $window = New-Object System.Windows.Window
+    $window.WindowStyle = [System.Windows.WindowStyle]::None
+    $window.ResizeMode = [System.Windows.ResizeMode]::NoResize
+    $window.ShowInTaskbar = $false
+    $window.Topmost = $true
+    $window.Title = 'winGodDockWidgetPicker'
+    $window.Width = 460
+    $window.Height = 480
+    $window.Background = $brushConverter.ConvertFromString($theme.barBackground)
+    $window.Padding = New-Object System.Windows.Thickness(4)
+    $script:dockWidgetPickerWindow = $window
+
+    $root = New-Object System.Windows.Controls.StackPanel
+    $root.Margin = New-Object System.Windows.Thickness(10, 10, 10, 12)
+    $window.Content = $root
+
+    $headerRow = New-Object System.Windows.Controls.StackPanel
+    $headerRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $title = New-Object System.Windows.Controls.TextBlock
+    $title.Text = 'Escolher widgets'
+    $title.Foreground = $foreground
+    $title.FontSize = 14
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    [void]$headerRow.Children.Add($title)
+    $close = New-Object System.Windows.Controls.Button
+    $close.Content = [char]0xE8BB
+    $close.FontFamily = (New-Object System.Windows.Media.FontFamily('Segoe MDL2 Assets'))
+    $close.Background = [System.Windows.Media.Brushes]::Transparent
+    $close.Foreground = $mutedForeground
+    $close.Width = 26
+    $close.Margin = New-Object System.Windows.Thickness(330, 0, 0, 0)
+    $close.Add_Click({ $script:dockWidgetPickerWindow.Close() })
+    [void]$headerRow.Children.Add($close)
+    [void]$root.Children.Add($headerRow)
+
+    $listHost = New-Object System.Windows.Controls.StackPanel
+    [void]$root.Children.Add($listHost)
+
+    $script:dockWidgetSummary = $null
+
+    foreach ($entry in (Get-WinGodDockWidgetCatalog)) {
+        $card = New-Object System.Windows.Controls.Border
+        $card.CornerRadius = New-Object System.Windows.CornerRadius(10)
+        $card.Margin = New-Object System.Windows.Thickness(0, 4, 0, 4)
+        $card.Padding = New-Object System.Windows.Thickness(12, 8, 12, 8)
+        $card.Cursor = [System.Windows.Input.Cursors]::Hand
+        $card.Tag = [string]$entry.id
+
+        $inner = New-Object System.Windows.Controls.StackPanel
+        $nameRow = New-Object System.Windows.Controls.TextBlock
+        $nameRow.Text = [string]$entry.name
+        $nameRow.Foreground = $foreground
+        $nameRow.FontSize = 12.5
+        $nameRow.FontWeight = [System.Windows.FontWeights]::SemiBold
+        [void]$inner.Children.Add($nameRow)
+        $descRow = New-Object System.Windows.Controls.TextBlock
+        $descRow.Text = [string]$entry.desc
+        $descRow.Foreground = $mutedForeground
+        $descRow.FontSize = 11
+        [void]$inner.Children.Add($descRow)
+        $card.Child = $inner
+
+        $card.Add_MouseLeftButtonUp({
+            param($sender, $eventArgs)
+            $id = [string]$sender.Tag
+            $has = @($WidgetState.list | Where-Object { $_ -eq $id }).Count -gt 0
+            if ($has) {
+                $WidgetState.list = @($WidgetState.list | Where-Object { $_ -ne $id })
+            }
+            else {
+                $WidgetState.list += $id
+            }
+            if ($script:dockWidgetSummary) {
+                $script:dockWidgetSummary.Text = ('Widgets: ' + (@($WidgetState.list) -join ', '))
+            }
+        }.GetNewClosure())
+
+        $listHost.Children.Add($card)
+    }
+
+    $window.Show()
 }
 
 function Start-WinGodDockPanel {
@@ -1157,14 +1545,27 @@ function Start-WinGodDockPanel {
 
     # ---------- widgets ----------
     Add-PanelLabel -Parent $root -Text 'Widgets do dock' -Size 12.5 -Brush $foreground | Out-Null
-    $toggleHost = New-Object System.Windows.Controls.StackPanel
-    $widgetToggle = @{
-        clock      = (Add-PanelToggle $toggleHost 'Relógio + data' ($panelWidgets -contains 'clock'))
-        stats      = (Add-PanelToggle $toggleHost 'CPU / RAM / disco' ($panelWidgets -contains 'stats'))
-        appTiles   = (Add-PanelToggle $toggleHost 'Apps pinados' ($panelWidgets -contains 'appTiles'))
-        indicators = (Add-PanelToggle $toggleHost 'Ícones de som e rede' ($panelWidgets -contains 'indicators'))
-    }
-    [void]$root.Children.Add($toggleHost)
+    $widgetState = @{ list = @($Config.widgets) }
+    $script:dockWidgetSummary = New-Object System.Windows.Controls.TextBlock
+    $script:dockWidgetSummary.Text = (@($Config.widgets) -join ', ')
+    $script:dockWidgetSummary.Foreground = $mutedForeground
+    $script:dockWidgetSummary.FontSize = 12
+    $script:dockWidgetSummary.Margin = New-Object System.Windows.Thickness(0, 0, 0, 6)
+    $script:dockWidgetSummary.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    [void]$root.Children.Add($script:dockWidgetSummary)
+
+    $widgetChoices = New-Object System.Windows.Controls.Button
+    $widgetChoices.Content = 'Escolher widgets…'
+    $widgetChoices.Background = [System.Windows.Media.Brushes]::Transparent
+    $widgetChoices.Foreground = $foreground
+    $widgetChoices.BorderBrush = $hover
+    $widgetChoices.Cursor = [System.Windows.Input.Cursors]::Hand
+    $widgetChoices.Padding = New-Object System.Windows.Thickness(10, 5, 10, 5)
+    $widgetChoices.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+    $widgetChoices.Add_Click({
+        Start-WinGodDockWidgetPicker -WidgetState $widgetState -ThemeName $Config.theme
+    }.GetNewClosure())
+    [void]$root.Children.Add($widgetChoices)
 
     # ---------- appearance ----------
     Add-PanelLabel -Parent $root -Text 'Aparência' -Size 12.5 -Brush $foreground | Out-Null
@@ -1270,17 +1671,7 @@ function Start-WinGodDockPanel {
     $addButton.Margin = New-Object System.Windows.Thickness(0, 6, 0, 0)
     $addButton.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
     $addButton.Add_Click({
-        $dialog = New-Object System.Windows.Forms.OpenFileDialog
-        $dialog.Title = 'Escolher app para pinar'
-        $dialog.Filter = 'Programas (*.exe;*.lnk)|*.exe;*.lnk|Todos (*.*)|*.*'
-        $result = $dialog.ShowDialog()
-        if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $dialog.FileName) {
-            $appsState.list += @{
-                Name = [IO.Path]::GetFileNameWithoutExtension($dialog.FileName)
-                Path = $dialog.FileName
-            }
-            Show-PanelAppRows
-        }
+        Start-WinGodDockAppPicker -AppState $appsState -ThemeName $Config.theme
     })
     [void]$root.Children.Add($addButton)
 
@@ -1315,13 +1706,10 @@ function Start-WinGodDockPanel {
             heightKey      = 'M'
             theme          = $Config.theme
             clock24h       = [bool]$clockToggle.IsChecked
-            widgets        = @()
+            widgets        = @($widgetState.list)
             autoHideBar    = [bool]$autoHideToggle.IsChecked
             fullscreenHide = [bool]$fullscreenToggle.IsChecked
             pinnedApps     = $appsState.list
-        }
-        foreach ($key in @('clock', 'stats', 'appTiles', 'indicators')) {
-            if ([bool]$widgetToggle[$key].IsChecked) { $next.widgets += $key }
         }
         foreach ($radio in @($themeRow.Children | Where-Object { $_ -is [System.Windows.Controls.RadioButton] })) {
             if ([bool]$radio.IsChecked) { $next.theme = [string]$radio.Tag }

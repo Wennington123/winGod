@@ -8,7 +8,11 @@
     "clock",
     "stats",
     "appTiles",
-    "indicators"
+    "indicators",
+    "battery",
+    "network",
+    "uptime",
+    "dayProgress"
   ],
   "AutoHideBar": true,
   "FullscreenHideBar": true,
