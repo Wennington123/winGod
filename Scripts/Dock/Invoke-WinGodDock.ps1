@@ -93,6 +93,7 @@ function New-WinGodDockConfig {
 
     return @{
         file           = $Path
+        glassMode      = if ($configRaw -and $configRaw.GlassMode) { $configRaw.GlassMode } else { 'solid' }
         heightKey      = $heightKey
         height         = $height
         theme          = if ($configRaw -and $configRaw.Theme) { $configRaw.Theme } else { 'dark' }
@@ -321,6 +322,43 @@ public static class WinGodDockNative
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     public static extern uint ExtractIconExW(string file, int index, [Out] IntPtr[] largeIcons, [Out] IntPtr[] smallIcons, uint count);
     [DllImport("user32.dll")] public static extern int DestroyIcon(IntPtr hIcon);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowCompositionAttribute(IntPtr hWnd, ref WCA_DATA data);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WCA_DATA
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ACCENT_POLICY
+    {
+        public int AccentState;      // 4 = ACCENT_ENABLE_ACRYLICBLURBEHIND, 3 = BLURBEHIND, 0 = none
+        public int AccentFlags;
+        public uint GradientColor;   // AABBGGRR: alpha channel carries the tint strength
+        public int AnimationId;
+    }
+
+    public static string ApplyGlass(IntPtr hWnd, uint tintColor)
+    {
+        var policy = new ACCENT_POLICY { AccentState = 4, AccentFlags = 2, GradientColor = tintColor, AnimationId = 0 };
+        IntPtr policyPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(ACCENT_POLICY)));
+        try {
+            Marshal.StructureToPtr(policy, policyPtr, false);
+            var data = new WCA_DATA { Attribute = 19, Data = policyPtr, SizeOfData = Marshal.SizeOf(typeof(ACCENT_POLICY)) };
+            if (!SetWindowCompositionAttribute(hWnd, ref data)) {
+                return "SetWindowCompositionAttribute error " + Marshal.GetLastWin32Error();
+            }
+            return "glass applied";
+        }
+        finally {
+            Marshal.FreeHGlobal(policyPtr);
+        }
+    }
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassNameW(IntPtr hWnd, [Out] StringBuilder className, int maxCount);
     [DllImport("user32.dll")] public static extern int GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -529,9 +567,15 @@ function Start-WinGodDockWindow {
     $window = New-Object System.Windows.Window
     $window.WindowStyle = [System.Windows.WindowStyle]::None
     $window.ResizeMode = [System.Windows.ResizeMode]::NoResize
-    # Opaque window in the SAME color as the bar: no white WPF default layer
-    # peeking around the rounded corners; AllowsTransparency does not compose
-    # paint in this stack.
+    # GlassMode blur: DWM acrylic behind a transparent client; solid: the
+    # opaque fallback path that is known to paint on this stack.
+    $script:dockGlassBlur = ($Config.glassMode -eq 'blur')
+    if ($script:dockGlassBlur) {
+        $window.Background = $null
+    }
+    else {
+        $window.Background = $brushConverter.ConvertFromString($theme.barBackground)
+    }
     $window.ShowInTaskbar = $false
     $window.ShowActivated = $false
     $window.Topmost = $true
@@ -546,7 +590,14 @@ function Start-WinGodDockWindow {
     # ---------- Bar ----------
     $bar = New-Object System.Windows.Controls.Border
     $bar.Height = $barHeight
-    $bar.Background = $brushConverter.ConvertFromString($theme.barBackground)
+    if ($script:dockGlassBlur) {
+        # thin tint over the DWM acrylic; the window bg stays empty so the
+        # blur shows through the gaps between the widgets
+        $bar.Background = $brushConverter.ConvertFromString('#40101216')
+    }
+    else {
+        $bar.Background = $brushConverter.ConvertFromString($theme.barBackground)
+    }
     $bar.BorderBrush = $brushConverter.ConvertFromString($theme.barBorder)
     $bar.BorderThickness = New-Object System.Windows.Thickness(0, 1, 0, 1)
     $bar.CornerRadius = New-Object System.Windows.CornerRadius(20)
@@ -565,6 +616,7 @@ function Start-WinGodDockWindow {
         $tilePanel.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
         $hoverBrush = $brushConverter.ConvertFromString($theme.tileHover)
+        $script:dockTileRefs = [System.Collections.Generic.List[object]]::new()
 
         foreach ($app in $Config.pinnedApps) {
             if (-not $app -or -not $app.Path) { continue }
@@ -580,6 +632,12 @@ function Start-WinGodDockWindow {
             $tile.ToolTip = [string]$app.Name
             $tile.Width = 40
             $tile.Height = 40
+
+            # macOS-style magnification: scale transform anchored at the bottom
+            $tileScale = New-Object System.Windows.Media.ScaleTransform
+            $tile.RenderTransformOrigin = New-Object System.Windows.Point(0.5, 1.0)
+            $tile.RenderTransform = $tileScale
+            $script:dockTileRefs.Add(@{ tile = $tile; scale = $tileScale })
 
             $tile.Add_MouseEnter({ $this.Background = $hoverBrush }.GetNewClosure())
             $tile.Add_MouseLeave({ $this.Background = [System.Windows.Media.Brushes]::Transparent }.GetNewClosure())
@@ -616,12 +674,41 @@ function Start-WinGodDockWindow {
 
             $targetApp = $app
             $tile.Add_MouseLeftButtonUp({
+                # bounce while launching
+                try {
+                    $bounce = New-Object System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames
+                    $bounce.KeyFrames.Add((New-Object System.Windows.Media.Animation.EasingDoubleKeyFrame(1.25, [TimeSpan]::FromMilliseconds(120))))
+                    $bounce.KeyFrames.Add((New-Object System.Windows.Media.Animation.LinearDoubleKeyFrame(1.0, [TimeSpan]::FromMilliseconds(320))))
+                    $tileScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $bounce)
+                    $tileScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $bounce)
+                }
+                catch {}
                 Invoke-WinGodDockAppLaunch -App $targetApp
             }.GetNewClosure())
 
             [void]$tilePanel.Children.Add($tile)
         }
 
+        # macOS magnification: neighbors scale by distance to the cursor
+        $script:dockTilePanelHost = $tilePanel
+        $tilePanel.Add_MouseMove({
+            $ev = $args[1]
+            $mx = $ev.GetPosition($script:dockTilePanelHost).X
+            foreach ($ref in $script:dockTileRefs) {
+                $center = $ref.tile.TranslatePoint((New-Object System.Windows.Point([double]$ref.tile.Width / 2.0, 0.0)), $script:dockTilePanelHost).X
+                $delta = [Math]::Abs($mx - $center)
+                $t = [Math]::Exp(-[Math]::Pow($delta / 55.0, 2.0))
+                $s = 1.0 + (0.35 * $t)
+                $ref.scale.ScaleX = $s
+                $ref.scale.ScaleY = $s
+            }
+        })
+        $tilePanel.Add_MouseLeave({
+            foreach ($ref in $script:dockTileRefs) {
+                $ref.scale.ScaleX = 1.0
+                $ref.scale.ScaleY = 1.0
+            }
+        })
         [void]$row.Children.Add($tilePanel)
     }
 
@@ -818,6 +905,12 @@ function Start-WinGodDockWindow {
         $h = $r.Bottom - $r.Top
         $rgn = [WinGodDockNative]::CreateRoundRectRgn(0, 0, $w + 1, $h + 1, 24, 24)
         [void][WinGodDockNative]::SetWindowRgn($handle, $rgn, $true)
+
+        # DWM acrylic behind the translucent bar in glass mode
+        if ($script:dockGlassBlur) {
+            $glassResult = [WinGodDockNative]::ApplyGlass($handle, 0x66000000)
+            Write-WinGodLog -Module 'dock' -Event 'dock.glass' -Message $glassResult
+        }
 
         Write-WinGodLog -Module 'dock' -Event 'dock.window.ready' -Message 'window handle styled'
     })
@@ -1018,13 +1111,20 @@ function Start-WinGodDockPanel {
     function Add-PanelToggle {
         param($Parent, [string]$Text, [bool]$Checked)
 
+        $card = New-Object System.Windows.Controls.Border
+        $card.CornerRadius = New-Object System.Windows.CornerRadius(8)
+        $card.Background = New-Object System.Windows.Media.SolidColorBrush(
+            [System.Windows.Media.Color]::FromArgb(0x22, 0xFF, 0xFF, 0xFF))
+        $card.Margin = New-Object System.Windows.Thickness(0, 3, 0, 3)
+
         $check = New-Object System.Windows.Controls.CheckBox
         $check.Content = $Text
         $check.IsChecked = $Checked
         $check.Foreground = $foreground
-        $check.Margin = New-Object System.Windows.Thickness(0, 2, 0, 2)
+        $check.Margin = New-Object System.Windows.Thickness(12, 7, 12, 7)
         $check.FontSize = 12.5
-        [void]$Parent.Children.Add($check)
+        $card.Child = $check
+        [void]$Parent.Children.Add($card)
         return $check
     }
 
